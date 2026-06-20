@@ -1,14 +1,15 @@
 <!DOCTYPE html>
 <html lang="th">
-<head>:<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
-
+<head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>แอปหารเงินทริปเพื่อนเที่ยว</title>
+    <title>แอปหารเงินทริปเพื่อนเที่ยว V3</title>
+    <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
     <style>
         :root {
             --primary: #4F46E5;
             --success: #10B981;
+            --line-color: #06C755;
             --danger: #EF4444;
             --bg: #F3F4F6;
             --card: #FFFFFF;
@@ -19,6 +20,7 @@
         .box { background: #F9FAFB; padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 1px solid #E5E7EB; }
         input, select, button { width: 100%; padding: 12px; margin-top: 5px; border-radius: 6px; box-sizing: border-box; font-size: 16px; border: 1px solid #D1D5DB; }
         button { background: var(--primary); color: #fff; border: none; font-weight: bold; cursor: pointer; margin-top: 10px; }
+        button:hover { opacity: 0.9; }
         
         .flex-row { display: flex; gap: 8px; align-items: center; margin-top: 5px; }
         .flex-row input { flex: 1; margin-top: 0; width: auto; }
@@ -32,12 +34,15 @@
         .checkbox-item { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
         .checkbox-item input[type="checkbox"] { width: 20px; height: 20px; margin: 0; }
         .checkbox-item input[type="number"] { width: 90px; padding: 6px; margin: 0; font-size: 15px; }
+        
+        /* ปุ่มสำหรับส่งเข้า LINE */
+        .btn-line { background: var(--line-color); color: white; margin-top: 12px; padding: 14px; font-size: 16px; display: none; }
     </style>
 </head>
 <body>
 
 <div class="container">
-    <h2>💸 แอปหารเงินเพื่อนเที่ยว</h2>
+    <h2>💸 แอปหารเงินเพื่อนเที่ยว V3</h2>
     
     <div class="box">
         <label><b>👥 สมาชิกในทริป (ใส่ชื่อเพื่อนทุกคนก่อน):</b></label>
@@ -87,12 +92,21 @@
     </div>
 
     <button onclick="calculateSettlements()" style="background: var(--success); font-size: 16px; padding: 14px;">🎯 คำนวณยอดสรุป (ใครโอนให้ใคร)</button>
+    
     <div id="resultArea" style="display:none" class="res"></div>
+    <button id="lineButton" class="btn-line" onclick="sendToLine()">📲 ส่งยอดสรุปนี้เข้ากลุ่ม LINE</button>
 </div>
 
 <script>
 let friends = [];
 let expenses = [];
+let isLiffReady = false;
+let liffMessageText = ""; // เก็บข้อความดิบไว้ส่งเข้า LINE
+
+// เริ่มทำงานระบบ LINE LIFF (ระบบจะทำงานเบื้องหลังอย่างปลอดภัย ไม่ทำให้เว็บพัง)
+liff.init({ liffId: "ใส่_LIFF_ID_ตรงนี้" })
+    .then(() => { isLiffReady = true; })
+    .catch((err) => { console.log("รันโหมดเว็บปกติ (ยังไม่ได้เชื่อมต่อหรือระบุ ID ของ LINE)"); });
 
 function addFriend() {
     let name = document.getElementById('friendName').value.trim();
@@ -145,6 +159,180 @@ function toggleSplitUI() {
     container.innerHTML = '';
     
     if (type === 'some_equal') {
+        label.innerText = '🎯 เลือกคนที่จะร่วมหารยอดนี้ (เท่าๆ กัน):';
+        friends.forEach(f => {
+            container.innerHTML += `
+                <div class="checkbox-item">
+                    <label><input type="checkbox" name="splitFriend" value="${f}" checked> ${f}</label>
+                </div>`;
+        });
+    } else if (type === 'custom') {
+        label.innerText = '💰 ระบุจำนวนเงินที่แต่ละคนต้องจ่าย:';
+        friends.forEach(f => {
+            container.innerHTML += `
+                <div class="checkbox-item">
+                    <span>${f}</span>
+                    <input type="number" class="custom-amount-input" data-friend="${f}" placeholder="0" min="0">
+                </div>`;
+        });
+    }
+}
+
+function addExpense() {
+    let desc = document.getElementById('expDesc').value.trim();
+    let amount = parseFloat(document.getElementById('expAmount').value);
+    let payer = document.getElementById('expPayer').value;
+    let type = document.getElementById('splitType').value;
+
+    if (friends.length === 0) return alert('กรุณาเพิ่มสมาชิกในทริปก่อนครับ!');
+    if (!desc || isNaN(amount) || amount <= 0 || !payer) return alert('กรุณากรอกข้อมูลรายการ จำนวนเงิน และเลือกคนจ่ายให้ครบถ้วน!');
+
+    let shares = {}; 
+    
+    if (type === 'all') {
+        let perPerson = amount / friends.length;
+        friends.forEach(f => shares[f] = perPerson);
+    } 
+    else if (type === 'some_equal') {
+        let checkedBoxes = document.querySelectorAll('input[name="splitFriend"]:checked');
+        if (checkedBoxes.length === 0) return alert('กรุณาเลือกคนร่วมหารอย่างน้อย 1 คนครับ!');
+        let perPerson = amount / checkedBoxes.length;
+        friends.forEach(f => shares[f] = 0); 
+        checkedBoxes.forEach(cb => shares[cb.value] = perPerson);
+    } 
+    else if (type === 'custom') {
+        let inputs = document.querySelectorAll('.custom-amount-input');
+        let sum = 0;
+        friends.forEach(f => shares[f] = 0);
+        
+        for (let input of inputs) {
+            let val = parseFloat(input.value) || 0;
+            shares[input.dataset.friend] = val;
+            sum += val;
+        }
+        
+        if (Math.abs(sum - amount) > 0.1) {
+            return alert(`ยอดรวมที่ระบุให้แต่ละคน (${sum} บ.) ไม่ตรงกับยอดจ่ายจริง (${amount} บ.) กรุณาเช็กตัวเลขอีกครั้งครับ!`);
+        }
+    }
+
+    expenses.push({ desc, amount, payer, shares });
+    document.getElementById('expDesc').value = '';
+    document.getElementById('expAmount').value = '';
+    toggleSplitUI();
+    renderExpenseLog();
+}
+
+function deleteExpense(index) {
+    expenses.splice(index, 1);
+    renderExpenseLog();
+}
+
+function renderExpenseLog() {
+    let container = document.getElementById('expenseLog');
+    let totalSpan = document.getElementById('totalTripAmount');
+    let total = 0;
+
+    if (expenses.length === 0) {
+        container.innerHTML = '<i>ยังไม่มีรายการคัดแยก</i>';
+        totalSpan.innerText = '0.00';
+        return;
+    }
+
+    container.innerHTML = '';
+    expenses.forEach((e, idx) => {
+        total += e.amount;
+        container.innerHTML += `
+            <div class="item">
+                <div>
+                    <b>${e.desc}</b> (💸 จ่ายโดย: ${e.payer})<br>
+                    <small style="color:#6B7280;">รวม ฿${e.amount.toFixed(2)}</small>
+                </div>
+                <div>
+                    <button onclick="deleteExpense(${idx})" style="background:var(--danger); width:auto; margin:0; padding:6px 10px; font-size:14px;">ลบ</button>
+                </div>
+            </div>`;
+    });
+    totalSpan.innerText = total.toFixed(2);
+    document.getElementById('resultArea').style.display = 'none';
+    document.getElementById('lineButton').style.display = 'none';
+}
+
+function calculateSettlements() {
+    if (expenses.length === 0) return alert('กรุณาบันทึกค่าใช้จ่ายก่อนคำนวณครับ!');
+    
+    let balances = {};
+    friends.forEach(f => balances[f] = 0);
+
+    expenses.forEach(e => {
+        balances[e.payer] += e.amount; 
+        friends.forEach(f => {
+            balances[f] -= (e.shares[f] || 0); 
+        });
+    });
+
+    let debtors = [];
+    let creditors = [];
+    for (let f of friends) {
+        let bal = balances[f];
+        if (bal < -0.01) debtors.push({ name: f, amount: Math.abs(bal) });
+        else if (bal > 0.01) creditors.push({ name: f, amount: bal });
+    }
+
+    let settlements = [];
+    let rawTextList = []; // ใช้เก็บข้อความส่งไลน์แบบไม่มีแท็ก HTML
+    let i = 0, j = 0;
+    while (i < debtors.length && j < creditors.length) {
+        let d = debtors[i];
+        let c = creditors[j];
+        let amt = Math.min(d.amount, c.amount);
+
+        settlements.push(`🔹 <b>${d.name}</b> โอนให้ <b>${c.name}</b> = <b style="color:#10B981;">฿${amt.toFixed(2)}</b>`);
+        rawTextList.push(`🔹 ${d.name} โอนให้ ${c.name} = ฿${amt.toFixed(2)}`);
+        
+        d.amount -= amt;
+        c.amount -= amt;
+        if (d.amount < 0.01) i++;
+        if (c.amount < 0.01) j++;
+    }
+
+    let resArea = document.getElementById('resultArea');
+    resArea.style.display = 'block';
+    
+    let html = `<h4 style="margin-top:0; color:#065F46; font-size:16px;">🎯 สรุปยอดโอนเพื่อเคลียร์บิล:</h4><hr style="border:0; border-top:1px solid #10B981; margin-bottom:10px;">`;
+    
+    if (settlements.length === 0) {
+        html += `✅ ทุกคนเคลียร์ยอดลงตัวเป๊ะ ไม่มีใครติดค้างใครครับ!`;
+        liffMessageText = `💸 สรุปยอดทริปนี้:\n✅ ทุกคนเคลียร์ยอดลงตัวเป๊ะ ไม่มีใครติดค้างใครครับ!`;
+    } else {
+        html += settlements.join('<br><br>');
+        liffMessageText = `💸 สรุปยอดโอนเพื่อเคลียร์บิลทริปนี้จ้า:\n\n` + rawTextList.join('\n');
+    }
+    resArea.innerHTML = html;
+
+    // ถ้าเปิดผ่านแอป LINE จริงๆ ให้แสดงปุ่มส่งข้อความเข้ากลุ่มเพิ่มขึ้นมา
+    if (isLiffReady && liff.isInClient()) {
+        document.getElementById('lineButton').style.display = 'block';
+    }
+}
+
+function sendToLine() {
+    if (!isLiffReady) return alert("ระบบ LINE ยังไม่พร้อมใช้งานครับ");
+    
+    liff.sendMessages([{
+        type: 'text',
+        text: liffMessageText
+    }]).then(() => {
+        alert("ส่งยอดเข้ากลุ่มเรียบร้อยแล้วครับ! 🎉");
+        liff.closeWindow(); // ปิดแอปอัติโนมัติ
+    }).catch((err) => {
+        alert("เกิดข้อผิดพลาดในการส่งเข้าไลน์กลุ่ม: " + err);
+    });
+}
+</script>
+
+</body>
+</html>
         label.innerText = '🎯 เลือกคนที่จะร่วมหารยอดนี้ (เท่าๆ กัน):';
         friends.forEach(f => {
             container.innerHTML += `
